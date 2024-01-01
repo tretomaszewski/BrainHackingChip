@@ -12,8 +12,8 @@ I would like to support other model loaders in the future, but currently you mus
 ## Installation
 
 0. If you haven't already: [Install Oobabooga Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/)
-1. Download ZIP from this repository or use `git clone https://github.com/SoylentMithril/BrainHackingChip.git`. Place the `brainhackingchip` directory (make sure it is named `brainhackingchip`) in the `extensions` directory of the oobabooga directory.
-2. Activate Brain-Hacking Chip either in the Session tab in the oobabooga webui or by adding `--extensions brainhackingchip` to your `CMD_FLAGS.txt` in the oobabooga directory.
+1. Download ZIP from this repository or use `git clone https://github.com/SoylentMithril/BrainHackingChip.git`. Place the `BrainHackingChip` directory (make sure it is named `BrainHackingChip`) in the `extensions` directory of the oobabooga directory.
+2. Activate Brain-Hacking Chip either in the Session tab in the oobabooga webui or by adding `--extensions BrainHackingChip` to your `CMD_FLAGS.txt` in the oobabooga directory.
 3. Switch to the Exllamav2 model loader and load your model in that! Exllamav2 is the only supported model loader!
 
 ## Brain-Hacking Chip is for: "better" negative prompts and hobbyist research
