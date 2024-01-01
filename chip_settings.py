@@ -1,4 +1,4 @@
-from extensions.brainhackingchip.settings_classes import LayerSettings
+from extensions.BrainHackingChip.settings_classes import LayerSettings
 
 def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     """

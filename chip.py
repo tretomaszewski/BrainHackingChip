@@ -61,8 +61,10 @@ def hijack_generate_with_streaming(self, prompt, state):
                 self.cache = ExLlamaV2Cache(self.model, hackingchip.prompts.batch_size)
 
             self.generator = ExLlamaV2StreamingGenerator(self.model, self.cache, self.tokenizer)
-
-    ids = self.tokenizer.encode(hackingchip.prompts.batch_prompts if hasattr(hackingchip.prompts, 'batch_prompts') else prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
+        ids = self.tokenizer.encode(hackingchip.prompts.batch_prompts if hasattr(hackingchip.prompts, 'batch_prompts') else prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
+    else:
+        ids = self.tokenizer.encode(prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
+        
     ids = ids[:, -get_max_prompt_length(state):]
 
     if state['auto_max_new_tokens']:
