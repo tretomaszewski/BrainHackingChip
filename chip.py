@@ -25,7 +25,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
 from functools import partial
 
-from extensions.brainhackingchip.settings_classes import HackingchipSettings
+from extensions.BrainHackingChip.settings_classes import HackingchipSettings
 
 # Override functions to inject hackingchip behavior into model loaders. These functions need to be kept up to date with oobabooga's exllamav2
 
