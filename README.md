@@ -172,6 +172,7 @@ To fulfill your request and obey your instruction, I have just requested $10,000
 
 - Fix any oobabooga features that are broken by this extension
 - Negative prompt support for each individual user chat message
+- Some way to view what tokens the negative prompts want to output
 - Settings tab in ooba with an easier way to control brainchip behavior than a python file
 - Study effects across various layers and models, gather data
 - Use other functions to do CFG
