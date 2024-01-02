@@ -7,8 +7,9 @@ A default configuration is included that should be reliable to use, allowing you
 
 ## What's new:
 
--Attention layer CFG with Q, K, V support. Target any attention layer(s) and any of Q, K, V for CFG with customizable weights in `chip_settings.py`. Works with previously existing CFG for each layer's output! Mix and match however you like.
--Custom CFG functions! You can set `cfg_func` on each layer to any function you would like. See `chip_settings.py` for more details and an example of a Repulsor CFG function.
+- Attention layer CFG with Q, K, V support. Target any attention layer(s) and any of Q, K, V for CFG with customizable weights in `chip_settings.py`. Works with previously existing CFG for each layer's output! Mix and match however you like.
+
+- Custom CFG functions! You can set `cfg_func` on each layer to any function you would like. See `chip_settings.py` for more details and an example of a Repulsor CFG function.
 
 ## Brain-Hacking Chip only works for the Exllamav2 model loader specifically (NOT Exllamav2_HF, NOT llama.cpp, nor any other)
 
