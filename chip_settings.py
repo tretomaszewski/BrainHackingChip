@@ -1,4 +1,4 @@
-from extensions.BrainHackingChip.settings_classes import LayerSettings
+from extensions.BrainHackingChip.settings_classes import LayerSettings, AttnSettings, AttnQSettings, AttnKSettings, AttnVSettings
 
 def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     """
@@ -34,9 +34,7 @@ def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     # logits_weight = 0.1
     # chip.layer_settings[head_layer] = LayerSettings(weight=logits_weight)
     
-    
-    
-    
+
     
     # Extra options:
     
@@ -45,5 +43,37 @@ def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     
     # All the generated prompts will be printed to the console
     chip.output_prompts = False # If this isn't set, the default is False
+    
+    
+    
+    
+    
+    
+    # Extra spicy experimental part! CFG on Q, K, and/or V on every attn layer
+    # You may want to comment out any other layer settings when testing this, cause who knows how that will interact with this
+    
+    # chip.attn_layers contains an array storing the layer index of each attention layer
+    # Their index in attn_layers is their attention index, so this can be used to convert from attention layer index to layer index
+    
+    # From my preliminary testing so far, attn_weight 0.1 applied to every attention layer seems be at least somewhat performing proper CFG!
+    # Any combination of Q, K, and/or V has some kind of visible negative steering effect, although each combination is likely different
+    # Try just Q on all layers with 0.2 weight! Still doesn't seem as good as my default settings above though.
+    # Q, K, V seem a lot more forgiving with weights, it takes much higher weights to break the output
+    
+    attn_weight = 0.2
+    
+    attn_test = AttnSettings()
+    
+    # Uncomment any of the Q, K, V lines below (can be used together)
+    
+    # attn_test.q = AttnQSettings(weight=attn_weight)
+    # attn_test.k = AttnKSettings(weight=attn_weight)
+    # attn_test.v = AttnVSettings(weight=attn_weight)
+    
+    # Uncomment one line below, first line uses every single attention layer and 2nd line only uses the very last attention layer
+    
+    # chip.attn_layer_settings = [attn_test] * len(chip.attn_layers) # testing every attention layer
+    # chip.attn_layer_settings[len(chip.attn_layers) - 1] = attn_test # testing only the last attention
+    
     
     return chip

@@ -20,10 +20,30 @@ from exllamav2 import (
     ExLlamaV2Cache,
     ExLlamaV2Cache_8bit,
 )
+from exllamav2.attn import ExLlamaV2Attention
 
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
 from functools import partial
+
+from exllamav2 import ext
+from exllamav2.ext import exllamav2_ext as ext_c
+import math
+from torch import nn
+
+# Detect flash-attn
+
+has_flash_attn = False
+try:
+    import flash_attn
+    flash_attn_ver = [int(t) for t in flash_attn.__version__.split(".") if t.isdigit()]
+    is_ampere_or_newer_gpu = any(torch.cuda.get_device_properties(i).major >= 8 for i in range(torch.cuda.device_count()))
+    
+    if flash_attn_ver >= [2, 2, 1] and is_ampere_or_newer_gpu:
+        from flash_attn import flash_attn_func
+        has_flash_attn = True
+except ModuleNotFoundError:
+    pass
 
 from extensions.BrainHackingChip.settings_classes import HackingchipSettings
 
@@ -52,15 +72,6 @@ def hijack_generate_with_streaming(self, prompt, state):
             
     hackingchip = self.generator.model.hackingchip if hasattr(self.generator.model, 'hackingchip') else None
     if hackingchip:
-        if hackingchip.prompts.batch_size != self.cache.batch_size: # the hackingchip tends to have extra batches, so it's time to prepare for that
-            # I'm not correctly deleting the existing cache, but it gets removed from VRAM somehow anyway
-            
-            if shared.args.cache_8bit:
-                self.cache = ExLlamaV2Cache_8bit(self.model, hackingchip.prompts.batch_size)
-            else:
-                self.cache = ExLlamaV2Cache(self.model, hackingchip.prompts.batch_size)
-
-            self.generator = ExLlamaV2StreamingGenerator(self.model, self.cache, self.tokenizer)
         ids = self.tokenizer.encode(hackingchip.prompts.batch_prompts if hasattr(hackingchip.prompts, 'batch_prompts') else prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
     else:
         ids = self.tokenizer.encode(prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
@@ -117,7 +128,7 @@ def hijack_gen_single_token(self, gen_settings, prefix_token = None):
     return token, eos
 
 @torch.inference_mode()
-def hijack_forward(self,
+def hijack_model_forward(self,
                 input_ids,
                 cache = None,
                 input_mask = None,
@@ -173,7 +184,7 @@ def hijack_forward(self,
         x = safe_move_tensor(x, device)
         x = module.forward(x, cache = cache, attn_mask = attn_mask, past_len = past_len, loras = loras, position_offsets = position_offsets)
         
-        if hackingchip and hackingchip.settings.on and hackingchip.prompts.numneg > 0 and hackingchip.settings.layer_settings[idx] != None:
+        if hackingchip and hackingchip.prompts.numneg > 0 and hackingchip.settings.layer_settings[idx] != None:
             settings = hackingchip.settings.layer_settings[idx]
             
             x_neg_orig = x[hackingchip.prompts.numpos:hackingchip.prompts.numpos+hackingchip.prompts.numneg, :, :]
@@ -204,6 +215,279 @@ def hijack_forward(self,
 
     return x, last_state
 
+def hijack_attn_forward(self, hidden_states, cache = None, attn_mask = None, past_len = None, intermediates = False, loras = None, position_offsets = None):
+    global has_flash_attn
+
+    qkv_embed = self.model.config.qkv_embed and self.layer_idx == 0
+
+    if self.q_handle is None or intermediates:
+        return self.forward_torch(hidden_states, cache, attn_mask, past_len, intermediates, loras = loras, position_offsets = position_offsets)
+
+    if qkv_embed:
+        batch_size = hidden_states[0].shape[0]
+        q_len = hidden_states[0].shape[1]
+    else:
+        batch_size = hidden_states.shape[0]
+        q_len = hidden_states.shape[1]
+
+    direct = (batch_size == 1 and cache is not None and isinstance(cache, ExLlamaV2CacheBase)) and not qkv_embed
+
+    # past_len = 0
+    # if cache is not None:
+    #     if isinstance(cache, ExLlamaV2Cache):
+    #         past_len = cache.current_seq_len
+    #     if isinstance(cache, list):
+    #         past_len = [c.current_seq_len for c in cache]
+
+    num_attention_heads = self.model.config.num_attention_heads
+    num_key_value_heads = self.model.config.num_key_value_heads
+    num_key_value_groups = self.model.config.num_key_value_groups
+    head_dim = self.model.config.head_dim
+    hidden_size = self.model.config.hidden_size
+
+    constants = self.model.get_device_tensors(self.device_idx)
+
+    if not qkv_embed:
+
+        q_shape = hidden_states.shape[:-1] + (self.q_proj.out_features,)
+        k_shape = hidden_states.shape[:-1] + (self.k_proj.out_features,)
+        v_shape = hidden_states.shape[:-1] + (self.v_proj.out_features,)
+        q_states = torch.empty(q_shape, device = hidden_states.device, dtype = torch.half)
+
+        # If conditions are right we can write the K/V projections directly into the cache
+
+        if direct:
+
+            batch_keys, batch_values = cache.get_kv_state(self.layer_idx, batch_size, 0, past_len)
+            k_states = batch_keys.narrow(0, 0, batch_size).narrow(1, past_len, q_len)
+            v_states = batch_values.narrow(0, 0, batch_size).narrow(1, past_len, q_len)
+
+        else:
+
+            k_states = torch.empty(k_shape, device = hidden_states.device, dtype = torch.half)
+            v_states = torch.empty(v_shape, device = hidden_states.device, dtype = torch.half)
+
+        # RMS norm, Q/K/V projections, position embeddings
+
+        if loras is None or self.temp_lora_size == 0:
+            pass_loras = []
+            pass_lora_temp = ext.none_tensor
+        else:
+            pass_loras = [id(x) for x in loras]
+            pass_lora_temp = torch.empty((self.temp_lora_size,), dtype = torch.half, device = hidden_states.device)
+
+        if isinstance(past_len, tuple):
+            pass_past_len_1 = -1
+            pass_past_len_2 = past_len[0]
+        elif position_offsets is not None:
+            pass_past_len_1 = past_len
+            pass_past_len_2 = position_offsets
+        else:
+            pass_past_len_1 = past_len
+            pass_past_len_2 = ext.none_tensor
+
+        ext_c.q_attn_forward_1(self.q_handle,
+                                hidden_states,
+                                batch_size,
+                                q_len,
+                                pass_past_len_1,
+                                pass_past_len_2,
+                                q_states,
+                                k_states,
+                                v_states,
+                                constants.sin,
+                                constants.cos,
+                                pass_loras,
+                                pass_lora_temp)
+
+    # Alternative, for embedded QKV
+
+    else:
+
+        q_states = hidden_states[1]
+        k_states = hidden_states[2]
+        v_states = hidden_states[3]
+        hidden_states = hidden_states[0]
+
+        offset_tensor = position_offsets if position_offsets is not None else ext.none_tensor
+        ext_c.rope_(q_states, constants.sin, constants.cos, past_len, num_attention_heads, head_dim, offset_tensor)
+        ext_c.rope_(k_states, constants.sin, constants.cos, past_len, num_key_value_heads, head_dim, offset_tensor)
+
+    #Hackingchip stuff
+
+    def hack_states(states, states_settings):
+            state_neg_steering = states[hackingchip.prompts.numpos:hackingchip.prompts.numpos+hackingchip.prompts.numneg, :, :]
+            state_neg_steering = torch.mean(state_neg_steering, dim=0, keepdim=False) # probably not the best way to handle this but oh well
+            state_neg_steering = states_settings.weight * (state_neg_steering - states[0])
+            
+            states -= state_neg_steering
+    
+    hackingchip = shared.model.generator.model.hackingchip if hasattr(shared.model.generator.model, 'hackingchip') else None
+    if hackingchip and hackingchip.prompts.numneg > 0 and hackingchip.settings.attn_layer_settings[self.layer_idx] != None:
+        settings = hackingchip.settings.attn_layer_settings[self.layer_idx]
+        
+        if settings.q: hack_states(q_states, settings.q)
+        if settings.k: hack_states(k_states, settings.k)
+        if settings.v: hack_states(v_states, settings.v)
+        
+    # Shape for attention
+    
+    q_states = q_states.view(batch_size, q_len, num_attention_heads, head_dim)
+    k_states = k_states.view(batch_size, q_len, num_key_value_heads, head_dim)
+    v_states = v_states.view(batch_size, q_len, num_key_value_heads, head_dim)
+
+    # Regular (batched) attention with optional padding mask
+
+    if cache is None or isinstance(cache, ExLlamaV2CacheBase):
+
+        # Add keys and values to cache
+
+        if cache is not None:
+
+            if direct:
+
+                k_states = batch_keys.narrow(0, 0, batch_size).narrow(1, 0, past_len + q_len)
+                v_states = batch_values.narrow(0, 0, batch_size).narrow(1, 0, past_len + q_len)
+
+            else:
+
+                batch_keys, batch_values = cache.get_kv_state(self.layer_idx, batch_size, 0, past_len)
+                new_keys = batch_keys.narrow(0, 0, batch_size).narrow(1, past_len, q_len)
+                new_values = batch_values.narrow(0, 0, batch_size).narrow(1, past_len, q_len)
+                new_keys.copy_(k_states)
+                new_values.copy_(v_states)
+
+                # Key/value tensors with past
+
+                k_states = batch_keys.narrow(1, 0, past_len + q_len)
+                v_states = batch_values.narrow(1, 0, past_len + q_len)
+
+        # Torch matmul attention
+
+        if self.model.config.no_flash_attn or not has_flash_attn:
+
+            q_states = q_states.transpose(1, 2)
+            k_states = k_states.transpose(1, 2)
+            v_states = v_states.transpose(1, 2)
+
+            k_states = self.repeat_kv(k_states, num_key_value_groups)
+            k_states = k_states.transpose(-1, -2)
+
+            attn_weights = torch.matmul(q_states, k_states)
+            k_states = None
+            q_states = None
+
+            attn_weights /= math.sqrt(head_dim)
+            if attn_mask is not None: attn_weights = attn_weights + attn_mask
+            attn_weights = nn.functional.softmax(attn_weights, dim = -1, dtype = torch.float16)
+
+            v_states = self.repeat_kv(v_states, num_key_value_groups)
+            attn_output = torch.matmul(attn_weights, v_states)
+            v_states = None
+
+            attn_output = attn_output.transpose(1, 2)
+            attn_output = attn_output.reshape((batch_size, q_len, hidden_size))
+
+        # Flash Attention 2
+
+        else:
+
+            attn_output = flash_attn_func(q_states, k_states, v_states, causal = True)
+            attn_output = attn_output.reshape((batch_size, q_len, hidden_size))
+
+        # xformers memory_efficient_attention
+
+        # attn_output = xops.memory_efficient_attention(q_states, k_states, v_states, attn_bias = xops.LowerTriangularMask())
+        # attn_output = attn_output.reshape((batch_size, q_len, hidden_size));
+
+        # Torch SDP attention:
+
+        # q_states = q_states.transpose(1, 2)
+        # k_states = k_states.transpose(1, 2)
+        # v_states = v_states.transpose(1, 2)
+        #
+        # # k_states = self.repeat_kv(k_states, num_key_value_groups)
+        # # v_states = self.repeat_kv(v_states, num_key_value_groups)
+        #
+        # attn_output = F.scaled_dot_product_attention(q_states, k_states, v_states, attn_mask = attn_mask, is_causal = False)
+        # attn_output = attn_output.transpose(1, 2)
+        # attn_output = attn_output.reshape((batch_size, q_len, hidden_size))
+
+        # Update 8-bit cache
+
+        if cache is not None:
+            cache.store_kv_state(self.layer_idx, batch_size, past_len, q_len)
+
+    # Multiple caches
+
+    else:
+
+        attn_outputs = []
+        for i in range(len(cache)):
+
+            # TODO: Once nested tensors are finalized in Torch, this could all be batched, probably
+
+            # Add keys and values to cache
+
+            batch_keys, batch_values = cache[i].get_kv_state(self.layer_idx, batch_size, 0, past_len)
+            new_keys = batch_keys.narrow(1, past_len[1][i], q_len)
+            new_values = batch_values.narrow(1, past_len[1][i], q_len)
+            new_keys.copy_(k_states.narrow(0, i, 1))
+            new_values.copy_(v_states.narrow(0, i, 1))
+
+            # Key/value tensors with past
+
+            k_states_b = batch_keys.narrow(1, 0, past_len[1][i] + q_len)
+            v_states_b = batch_values.narrow(1, 0, past_len[1][i] + q_len)
+
+            # Torch matmul attention
+
+            # TODO: enable flash-attn
+
+            q_states_b = q_states.transpose(1, 2).narrow(0, i, 1)
+            k_states_b = k_states_b.transpose(1, 2)
+            v_states_b = v_states_b.transpose(1, 2)
+
+            k_states_b = self.repeat_kv(k_states_b, num_key_value_groups)
+            k_states_b = k_states_b.transpose(-1, -2)
+
+            attn_weights = torch.matmul(q_states_b, k_states_b)
+            q_states_b = None
+            k_states_b = None
+
+            attn_weights /= math.sqrt(head_dim)
+            if attn_mask is not None: attn_weights = attn_weights + attn_mask[i]
+            attn_weights = nn.functional.softmax(attn_weights, dim = -1, dtype = torch.float16)
+
+            v_states_b = self.repeat_kv(v_states_b, num_key_value_groups)
+            attn_output_b = torch.matmul(attn_weights, v_states_b)
+            v_states_b = None
+
+            attn_outputs.append(attn_output_b)
+
+        q_states = None
+        k_states = None
+        v_states = None
+
+        attn_output = torch.cat(attn_outputs, dim = 0)
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape((batch_size, q_len, hidden_size))
+
+    # Output projection
+
+    ext_c.q_attn_forward_2(self.q_handle,
+                            hidden_states,
+                            attn_output,
+                            batch_size,
+                            q_len,
+                            pass_loras,
+                            pass_lora_temp)
+
+    attn_output = None
+    attn_weights = None
+
+    return hidden_states
+
 # Here is the actual construction and injection of the hackingchip into the model
 
 class Hackingchip:
@@ -219,21 +503,48 @@ class HackingchipPrompts:
         self.batch_size = numpos + numneg
         
 def gen_full_prompt(user_settings, user_input, state, **kwargs):
+    settings = None
+    
     if shared.model != None and isinstance(shared.model, Exllamav2Model): # hackingchippable
-        shared.model.generate_with_streaming = hijack_generate_with_streaming.__get__(shared.model, Exllamav2Model)
-        # shared.model.generator._gen_single_token = hijack_gen_single_token.__get__(shared.model.generator, ExLlamaV2StreamingGenerator)
-        # The above line isn't working here, had to relocate it
-        shared.model.generator.model._forward = hijack_forward.__get__(shared.model.generator.model, ExLlamaV2)
-        
         last_kv_layer = shared.model.generator.model.last_kv_layer_idx
         head_layer = shared.model.generator.model.head_layer_idx
         
-        settings = user_settings.brainhackingchip_settings(HackingchipSettings(head_layer), last_kv_layer, head_layer) # prepare hackingchip settings
+        attn_layers = []
+        
+        for idx, module in enumerate(shared.model.generator.model.modules):
+            if isinstance(module, ExLlamaV2Attention):
+                attn_layers.append(idx)
+            
+        layers_count = head_layer + 1
+        
+        settings = user_settings.brainhackingchip_settings(HackingchipSettings(layers_count, attn_layers), last_kv_layer, head_layer) # prepare hackingchip settings
+        
+    if settings and settings.on:
         baseprompt, prompts = gen_full_prompt2(user_input, state, **kwargs) # prepare hackingchip prompts
         
         hackingchip = Hackingchip(settings, prompts)
         shared.model.generator.model.hackingchip = hackingchip # hackingchip installed
         
+        if isinstance(shared.model, Exllamav2Model): # May as well be prepared for other model loaders, making sure this is exllamav2
+            if hackingchip.prompts.batch_size != shared.model.cache.batch_size: # the hackingchip tends to have extra batches, so it's time to prepare for that
+                # I'm not correctly deleting the existing cache, but it gets removed from VRAM somehow anyway
+                
+                if shared.args.cache_8bit:
+                    shared.model.cache = ExLlamaV2Cache_8bit(shared.model.model, hackingchip.prompts.batch_size)
+                else:
+                    shared.model.cache = ExLlamaV2Cache(shared.model.model, hackingchip.prompts.batch_size)
+
+                shared.model.generator = ExLlamaV2StreamingGenerator(shared.model.model, shared.model.cache, shared.model.tokenizer)
+                
+            # Hijack functions
+            shared.model.generate_with_streaming = hijack_generate_with_streaming.__get__(shared.model, Exllamav2Model)
+            shared.model.generator._gen_single_token = hijack_gen_single_token.__get__(shared.model.generator, ExLlamaV2StreamingGenerator)
+            shared.model.generator.model._forward = hijack_model_forward.__get__(shared.model.generator.model, ExLlamaV2)
+        
+            for idx, module in enumerate(shared.model.generator.model.modules):
+                if isinstance(module, ExLlamaV2Attention):
+                    module.forward = hijack_attn_forward.__get__(module, ExLlamaV2Attention)
+                    
         if hackingchip.settings.output_prompts:
             print("Hackingchip prompts:")
             for prompt in hackingchip.prompts.batch_prompts:
