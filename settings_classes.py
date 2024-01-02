@@ -9,10 +9,14 @@ class HackingchipSettings:
         self.attn_layer_settings = [None] * len(attn_layers)
         self.attn_layers = attn_layers # Stores the layer index of each attention layer, for conversion from attention layer idx to layer idx
 
-
-class LayerSettings:
-    def __init__(self, weight=0.0):
+class LayerSettingsBase:
+    def __init__(self, weight=0.0, cfg_func=None):
         self.weight = weight
+        self.cfg_func = cfg_func
+
+class LayerSettings(LayerSettingsBase):
+    def __init__(self, weight=0.0, cfg_func=None):
+        super().__init__(weight, cfg_func)
         
 class AttnSettings:
     def __init__(self, q=None, k=None, v=None): # Use AttnQSettings, AttnKSettings, AttnVSettings respectively, in case each needs special handling
@@ -20,15 +24,15 @@ class AttnSettings:
         self.k = k # AttnKSettings
         self.v = v # AttnVSettings
         
-class AttnQSettings:
-    def __init__(self, weight=0.0):
-        self.weight = weight
+class AttnQSettings(LayerSettingsBase):
+    def __init__(self, weight=0.0, cfg_func=None):
+        super().__init__(weight, cfg_func)
         
-class AttnKSettings:
-    def __init__(self, weight=0.0):
-        self.weight = weight
+class AttnKSettings(LayerSettingsBase):
+    def __init__(self, weight=0.0, cfg_func=None):
+        super().__init__(weight, cfg_func)
         
-class AttnVSettings:
-    def __init__(self, weight=0.0):
-        self.weight = weight
+class AttnVSettings(LayerSettingsBase):
+    def __init__(self, weight=0.0, cfg_func=None):
+        super().__init__(weight, cfg_func)
         

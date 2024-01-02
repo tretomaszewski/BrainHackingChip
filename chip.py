@@ -187,12 +187,15 @@ def hijack_model_forward(self,
         if hackingchip and hackingchip.prompts.numneg > 0 and hackingchip.settings.layer_settings[idx] != None:
             settings = hackingchip.settings.layer_settings[idx]
             
-            x_neg_orig = x[hackingchip.prompts.numpos:hackingchip.prompts.numpos+hackingchip.prompts.numneg, :, :]
-            x_neg_steering = torch.mean(x_neg_orig, dim=0, keepdim=False) # probably not the best way to handle this but oh well
-            x_neg_steering = settings.weight * (x_neg_steering - x[0])
+            if settings.cfg_func:
+                x = settings.cfg_func(x, settings, hackingchip)
+            else:
+                x_neg_steering = x[hackingchip.prompts.numpos:hackingchip.prompts.negend, :, :]
+                x_neg_steering = torch.mean(x_neg_steering, dim=0, keepdim=False) # probably not the best way to handle this but oh well
+                x_neg_steering = settings.weight * (x_neg_steering - x[0])
 
-            # It's important to steer all of the vectors, or else the difference artificially accumulates and accelerates.
-            x -= x_neg_steering
+                # It's important to steer all of the vectors, or else the difference artificially accumulates and accelerates.
+                x -= x_neg_steering
         
         if preprocess_only and idx == self.last_kv_layer_idx:
             x = None
@@ -316,7 +319,10 @@ def hijack_attn_forward(self, hidden_states, cache = None, attn_mask = None, pas
     #Hackingchip stuff
 
     def hack_states(states, states_settings):
-            state_neg_steering = states[hackingchip.prompts.numpos:hackingchip.prompts.numpos+hackingchip.prompts.numneg, :, :]
+        if states_settings.cfg_func:
+            states = states_settings.cfg_func(states, states_settings, hackingchip)
+        else:
+            state_neg_steering = states[hackingchip.prompts.numpos:hackingchip.prompts.negend, :, :]
             state_neg_steering = torch.mean(state_neg_steering, dim=0, keepdim=False) # probably not the best way to handle this but oh well
             state_neg_steering = states_settings.weight * (state_neg_steering - states[0])
             
@@ -500,6 +506,7 @@ class HackingchipPrompts:
         self.batch_prompts = prompts
         self.numpos = numpos
         self.numneg = numneg
+        self.negend = numpos + numneg
         self.batch_size = numpos + numneg
         
 def gen_full_prompt(user_settings, user_input, state, **kwargs):
