@@ -5,6 +5,10 @@ Typical CFG only affects the logit probabilities outputted at the end of the LLM
 
 A default configuration is included that should be reliable to use, allowing you to directly jump to using negative prompts (see "Better" Negative Prompts). Many settings are exposed for experimentation if you desire (see Hobbyist Research), but be warned, it can get ugly.
 
+## What's new:
+
+Experimental attention layer CFG with Q, K, V support. Target any attention layer(s) and any of Q, K, V for CFG with customizable weights in `chip_settings.py`. Works with previously existing CFG for each layer's output! Mix and match however you like
+
 ## Brain-Hacking Chip only works for the Exllamav2 model loader specifically (NOT Exllamav2_HF, NOT llama.cpp, nor any other)
 
 I would like to support other model loaders in the future, but currently you must use Exllamav2. It will likely be difficult to integrate this into other model loaders.
