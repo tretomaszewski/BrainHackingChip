@@ -560,7 +560,7 @@ def gen_full_prompt(user_settings, user_input, state, **kwargs):
         return baseprompt
     else:
         # Should I warn the user that they aren't able to use hackingchip with their current model loader? Or would that be annoying?
-        print("Unsupported model loader: Brain-Hacking Chip won't work with it")
+        if settings is None: print("Unsupported model loader: Brain-Hacking Chip won't work with it")
         return chat.generate_chat_prompt(user_input, state, **kwargs)
             
             
