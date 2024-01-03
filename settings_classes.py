@@ -4,6 +4,7 @@ class HackingchipSettings:
     def __init__(self, layer_count, attn_layers):
         self.on = True
         self.output_prompts = False
+        self.output_extra_samples = False
         
         self.layer_settings = [None] * layer_count
         self.attn_layer_settings = [None] * len(attn_layers)

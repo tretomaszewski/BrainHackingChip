@@ -78,6 +78,9 @@ def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     # All the generated prompts will be printed to the console
     chip.output_prompts = False # If this isn't set, the default is False
     
+    # The output of each extra prompt will be printed to the console after generation completes
+    chip.output_extra_samples = False # If this isn't set, the default is False
+    
     
     
     
@@ -96,13 +99,16 @@ def brainhackingchip_settings(chip, last_kv_layer, head_layer):
     
     attn_weight = 0.2
     
+    # You can do custom cfg_func with Q, K, V as well! It's the exact same function signature (so can use the same function for all if you want)
+    attn_cfg_func = None
+    
     attn_test = AttnSettings()
     
     # Uncomment any of the Q, K, V lines below (can be used together)
     
-    # attn_test.q = AttnQSettings(weight=attn_weight)
-    # attn_test.k = AttnKSettings(weight=attn_weight)
-    # attn_test.v = AttnVSettings(weight=attn_weight)
+    # attn_test.q = AttnQSettings(weight=attn_weight, cfg_func=attn_cfg_func)
+    # attn_test.k = AttnKSettings(weight=attn_weight, cfg_func=attn_cfg_func)
+    # attn_test.v = AttnVSettings(weight=attn_weight, cfg_func=attn_cfg_func)
     
     # Uncomment one line below, first line uses every single attention layer and 2nd line only uses the very last attention layer
     

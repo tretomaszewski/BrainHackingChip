@@ -77,7 +77,7 @@ def hijack_generate_with_streaming(self, prompt, state):
         ids = self.tokenizer.encode(prompt, add_bos=state['add_bos_token'], encode_special_tokens=True)
         
     ids = ids[:, -get_max_prompt_length(state):]
-
+    
     if state['auto_max_new_tokens']:
         max_new_tokens = state['truncation_length'] - ids.shape[-1]
     else:
@@ -85,13 +85,28 @@ def hijack_generate_with_streaming(self, prompt, state):
 
     self.generator.begin_stream(ids, settings, loras=self.loras)
     
-    # If generator gets reconstructed above, my attempt to overwrite this function from earlier will be reset. So I'm setting the function here.
+    # I still need this here maybe? Not sure
     self.generator._gen_single_token = hijack_gen_single_token.__get__(shared.model.generator, ExLlamaV2StreamingGenerator)
-
+    
     decoded_text = ''
     for i in range(max_new_tokens):
         chunk, eos, _ = self.generator.stream()
         if eos or shared.stop_everything:
+            if hackingchip and hackingchip.settings.output_extra_samples and hasattr(hackingchip, 'real_ids'):
+                strings = self.generator.tokenizer.decode(hackingchip.real_ids)
+                
+                if hackingchip.prompts.numpos > 1:
+                    print("Extra positive prompt output:")
+                    
+                    for index, string_value in enumerate(strings[1:hackingchip.prompts.numpos], start=1):
+                        print(" Positive (" + str(index) + "): " + string_value)
+                
+                if hackingchip.prompts.numneg > 0:
+                    print("Negative prompt output:")
+                    
+                    for index, string_value in enumerate(strings[hackingchip.prompts.numpos:hackingchip.prompts.negend], start=hackingchip.prompts.numpos):
+                        print(" Negative " + str(index) + ": " + string_value)
+                
             if hasattr(self.generator.model, 'hackingchip'): del self.generator.model.hackingchip # remove hackingchip after use, just in case
             # TODO: I realized I probably should return the functions back to normal too, have to store and retrieve to do so
             break
@@ -108,16 +123,17 @@ def hijack_gen_single_token(self, gen_settings, prefix_token = None):
 
         logits = self.model.forward(self.sequence_ids[:, -1:], self.cache, loras = self.active_loras).float().cpu()
         
-        if hackingchip: # the hackingchip starts with extra batches that then are not sampled, so it's time to fix that
-            logits = logits[0].unsqueeze(0)
-            samplerids = self.sequence_ids[0].unsqueeze(0)
-        else:
-            samplerids = self.sequence_ids
+        token, _, eos = ExLlamaV2Sampler.sample(logits, gen_settings, self.sequence_ids, random.random(), self.tokenizer, prefix_token)
         
-        token, _, eos = ExLlamaV2Sampler.sample(logits, gen_settings, samplerids, random.random(), self.tokenizer, prefix_token)
-        
-        # only sampled one token, but need to expand out to the ids size to put it in all other batches, can't replace token because that will break stream
-        batch_token = token.expand(self.sequence_ids.size(0), -1)
+        if token.size(0) > 1:
+            if hackingchip and hackingchip.settings.output_extra_samples:
+                if hasattr(hackingchip, 'real_ids'):
+                    hackingchip.real_ids = torch.cat([hackingchip.real_ids, token], dim = 1)
+                else:
+                    hackingchip.real_ids = token.clone()
+            
+            token = token[0].unsqueeze(0) # only using the one positive sampled token
+            batch_token = token.expand(self.sequence_ids.size(0), -1)
 
     else:
 

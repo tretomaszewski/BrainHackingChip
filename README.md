@@ -11,6 +11,8 @@ A default configuration is included that should be reliable to use, allowing you
 
 - Custom CFG functions! You can set `cfg_func` on each layer to any function you would like. See `chip_settings.py` for more details and an example of a Repulsor CFG function.
 
+- Sample the negative prompts and see their output in the console! It looks pretty scrambled, but it could be helpful for debugging. Turn on `chip.output_negative_samples` in `chip_settings.py`.
+
 ## Brain-Hacking Chip only works for the Exllamav2 model loader specifically (NOT Exllamav2_HF, NOT llama.cpp, nor any other)
 
 I would like to support other model loaders in the future, but currently you must use Exllamav2. It will likely be difficult to integrate this into other model loaders.
@@ -18,7 +20,7 @@ I would like to support other model loaders in the future, but currently you mus
 ## Installation
 
 0. If you haven't already: [Install Oobabooga Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/)
-1. [Download the release](https://github.com/SoylentMithril/BrainHackingChip/archive/refs/tags/0.11.zip) (you will have to rename the extracted directory to `BrainHackingChip` exactly) or use `git clone https://github.com/SoylentMithril/BrainHackingChip.git`. Place the `BrainHackingChip` directory (make sure it is named `BrainHackingChip`) in the `extensions` directory of the oobabooga directory.
+1. [Download the release](https://github.com/SoylentMithril/BrainHackingChip/archive/refs/tags/0.12.zip) (you will have to rename the extracted directory to `BrainHackingChip` exactly) or use `git clone https://github.com/SoylentMithril/BrainHackingChip.git`. Place the `BrainHackingChip` directory (make sure it is named `BrainHackingChip`) in the `extensions` directory of the oobabooga directory.
 2. Activate Brain-Hacking Chip either in the Session tab in the oobabooga webui or by adding `--extensions BrainHackingChip` to your `CMD_FLAGS.txt` in the oobabooga directory.
 3. Switch to the Exllamav2 model loader and load your model in that! Exllamav2 is the only supported model loader!
 
