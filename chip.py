@@ -123,7 +123,13 @@ def hijack_gen_single_token(self, gen_settings, prefix_token = None):
 
         logits = self.model.forward(self.sequence_ids[:, -1:], self.cache, loras = self.active_loras).float().cpu()
         
-        token, _, eos = ExLlamaV2Sampler.sample(logits, gen_settings, self.sequence_ids, random.random(), self.tokenizer, prefix_token)
+        if hackingchip and hackingchip.settings.output_extra_samples:
+            samplerids = self.sequence_ids
+        else:
+            logits = logits[0].unsqueeze(0)
+            samplerids = self.sequence_ids[0].unsqueeze(0)
+        
+        token, _, eos = ExLlamaV2Sampler.sample(logits, gen_settings, samplerids, random.random(), self.tokenizer, prefix_token)
         
         if token.size(0) > 1:
             if hackingchip and hackingchip.settings.output_extra_samples:
@@ -133,7 +139,9 @@ def hijack_gen_single_token(self, gen_settings, prefix_token = None):
                     hackingchip.real_ids = token.clone()
             
             token = token[0].unsqueeze(0) # only using the one positive sampled token
-            batch_token = token.expand(self.sequence_ids.size(0), -1)
+        
+        # Maybe this if statement isn't necessary and expand won't cause issues?
+        if hackingchip and hackingchip.prompts.batch_size > 1: batch_token = token.expand(self.sequence_ids.size(0), -1)
 
     else:
 
