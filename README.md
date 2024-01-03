@@ -11,7 +11,7 @@ A default configuration is included that should be reliable to use, allowing you
 
 - Custom CFG functions! You can set `cfg_func` on each layer to any function you would like. See `chip_settings.py` for more details and an example of a Repulsor CFG function.
 
-- Sample the negative prompts and see their output in the console! It looks pretty scrambled, but it could be helpful for debugging. Turn on `chip.output_negative_samples` in `chip_settings.py`.
+- Sample the negative prompts and see their output in the console! It looks pretty scrambled, but it could be helpful for debugging. Turn on `chip.output_extra_samples` in `chip_settings.py`.
 
 ## Brain-Hacking Chip only works for the Exllamav2 model loader specifically (NOT Exllamav2_HF, NOT llama.cpp, nor any other)
 
